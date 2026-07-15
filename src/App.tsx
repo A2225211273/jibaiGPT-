@@ -1,4 +1,13 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useCodexUsage } from "./hooks/useCodexUsage";
+import {
+  formatPlanLabel,
+  formatResetTime,
+  formatTokenMetric,
+  formatUpdatedAt,
+  isTauriRuntime,
+  type UsageSnapshot,
+} from "./lib/usage";
 
 type Theme = "light" | "dark";
 type View = "board" | "desktop" | "attached" | "conversation";
@@ -135,11 +144,11 @@ function UsageRow({
 }: {
   kind: "short" | "long";
   label: string;
-  remaining: number;
+  remaining: number | null;
   reset: string;
 }) {
   return (
-    <section className="usage-row" aria-label={`${label}剩余${remaining}%`}>
+    <section className={remaining === null ? "usage-row is-unavailable" : "usage-row"} aria-label={`${label}${remaining === null ? "暂无数据" : `剩余${remaining}%`}`}>
       <div className="usage-copy">
         <div className="usage-label">
           <span className="icon-badge">{kind === "short" ? icons.clock : icons.calendar}</span>
@@ -147,31 +156,33 @@ function UsageRow({
         </div>
         <div className="usage-value">
           <span>剩余</span>
-          <strong>{remaining}%</strong>
+          <strong>{remaining === null ? "—" : `${remaining}%`}</strong>
         </div>
         <div className="reset-copy">{reset}</div>
       </div>
       <div className="usage-visual">
-        <SequenceWave level={remaining} />
+        {remaining === null ? <span className="usage-placeholder">等待真实数据</span> : <SequenceWave level={remaining} />}
         <div className="linear-progress" aria-hidden="true">
-          <span style={{ width: `${remaining}%` }} />
+          <span style={{ width: `${remaining ?? 0}%` }} />
         </div>
       </div>
     </section>
   );
 }
 
-const summaryItems = [
+type SummaryItem = { icon: ReactNode; label: string; value: string; unit: string; warning?: boolean };
+
+const summaryItems: SummaryItem[] = [
   { icon: icons.tokens, label: "今日 Token", value: "128", unit: "万" },
   { icon: icons.chart, label: "近 7 天", value: "642", unit: "万" },
   { icon: icons.clock, label: "已工作", value: "58", unit: "分钟" },
   { icon: icons.bell, label: "距离提醒", value: "2", unit: "分钟", warning: true },
 ];
 
-function SummaryMetrics({ compact = false }: { compact?: boolean }) {
+function SummaryMetrics({ compact = false, items = summaryItems }: { compact?: boolean; items?: SummaryItem[] }) {
   return (
     <div className={compact ? "summary-metrics is-compact" : "summary-metrics"}>
-      {summaryItems.map((item) => (
+      {items.map((item) => (
         <div className={item.warning ? "summary-item is-warning" : "summary-item"} key={item.label}>
           <span className="summary-icon">{item.icon}</span>
           <span className="summary-label">{item.label}</span>
@@ -185,7 +196,133 @@ function SummaryMetrics({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function DesktopPanel({ onSettings }: { onSettings: () => void }) {
+type StatusTone = "good" | "warning" | "error" | "neutral";
+
+interface DesktopViewModel {
+  planLabel: string;
+  statusTitle: string;
+  statusMessage: string | null;
+  statusTone: StatusTone;
+  shortRemaining: number | null;
+  shortReset: string;
+  longRemaining: number | null;
+  longReset: string;
+  summary: SummaryItem[];
+  sourceText: string;
+}
+
+const demoViewModel: DesktopViewModel = {
+  planLabel: "PLUS",
+  statusTitle: "工作余量充足",
+  statusMessage: null,
+  statusTone: "good",
+  shortRemaining: 72,
+  shortReset: "3小时12分后重置",
+  longRemaining: 41,
+  longReset: "周二 10:00 重置",
+  summary: summaryItems,
+  sourceText: "数据来自 Codex · 刚刚更新",
+};
+
+function runtimeSummary(snapshot: UsageSnapshot | null): SummaryItem[] {
+  const today = formatTokenMetric(snapshot?.tokenUsage?.todayTokens);
+  const lastWeek = formatTokenMetric(snapshot?.tokenUsage?.last7DaysTokens);
+  return [
+    { icon: icons.tokens, label: "今日 Token", value: today.value, unit: today.unit },
+    { icon: icons.chart, label: "近 7 天", value: lastWeek.value, unit: lastWeek.unit },
+    { icon: icons.clock, label: "已工作", value: "—", unit: "" },
+    { icon: icons.bell, label: "距离提醒", value: "—", unit: "", warning: false },
+  ];
+}
+
+function toDesktopViewModel(
+  runtime: boolean,
+  snapshot: UsageSnapshot | null,
+  loading: boolean,
+  error: string | null,
+): DesktopViewModel {
+  if (!runtime) return demoViewModel;
+  if (error) {
+    return {
+      planLabel: "未连接",
+      statusTitle: "暂时无法读取用量",
+      statusMessage: error,
+      statusTone: "error",
+      shortRemaining: null,
+      shortReset: "请检查 Codex CLI",
+      longRemaining: null,
+      longReset: "稍后可重新读取",
+      summary: runtimeSummary(null),
+      sourceText: "Codex app-server · 读取失败",
+    };
+  }
+  if (!snapshot) {
+    return {
+      planLabel: "连接中",
+      statusTitle: loading ? "正在读取真实用量" : "等待 Codex 数据",
+      statusMessage: "禾序只通过本机 app-server 获取账户状态。",
+      statusTone: "neutral",
+      shortRemaining: null,
+      shortReset: "正在读取",
+      longRemaining: null,
+      longReset: "正在读取",
+      summary: runtimeSummary(null),
+      sourceText: "正在连接 Codex app-server",
+    };
+  }
+  if (snapshot.status !== "ready") {
+    return {
+      planLabel: snapshot.status === "signed_out" ? "未登录" : "不支持",
+      statusTitle: snapshot.status === "signed_out" ? "请先登录 Codex" : "当前登录方式不支持",
+      statusMessage: snapshot.message,
+      statusTone: snapshot.status === "signed_out" ? "neutral" : "warning",
+      shortRemaining: null,
+      shortReset: "没有可显示的账户额度",
+      longRemaining: null,
+      longReset: "不会使用本地 Token 估算",
+      summary: runtimeSummary(snapshot),
+      sourceText: `${snapshot.source} · ${formatUpdatedAt(snapshot.updatedAt)}`,
+    };
+  }
+
+  const selected = snapshot.rateLimits?.selected;
+  const shortRemaining = selected?.primary ? Math.round(selected.primary.remainingPercent) : null;
+  const longRemaining = selected?.secondary ? Math.round(selected.secondary.remainingPercent) : null;
+  const lowest = Math.min(shortRemaining ?? 100, longRemaining ?? 100);
+  const reached = Boolean(selected?.rateLimitReachedType);
+  const statusTone: StatusTone = reached ? "error" : lowest <= 20 ? "warning" : "good";
+  const statusTitle = reached ? "账户额度暂不可用" : lowest <= 20 ? "用量余量偏低" : "工作余量充足";
+
+  return {
+    planLabel: formatPlanLabel(snapshot.account?.planType ?? selected?.planType),
+    statusTitle,
+    statusMessage: snapshot.message,
+    statusTone,
+    shortRemaining,
+    shortReset: formatResetTime(selected?.primary?.resetsAt ?? null),
+    longRemaining,
+    longReset: formatResetTime(selected?.secondary?.resetsAt ?? null),
+    summary: runtimeSummary(snapshot),
+    sourceText: `${snapshot.source} · ${formatUpdatedAt(snapshot.updatedAt)}`,
+  };
+}
+
+function DesktopPanel({
+  onSettings,
+  runtime = false,
+  snapshot = null,
+  loading = false,
+  error = null,
+  onRefresh,
+}: {
+  onSettings: () => void;
+  runtime?: boolean;
+  snapshot?: UsageSnapshot | null;
+  loading?: boolean;
+  error?: string | null;
+  onRefresh?: () => void;
+}) {
+  const view = toDesktopViewModel(runtime, snapshot, loading, error);
   return (
     <article className="desktop-panel">
       <header className="panel-header">
@@ -197,7 +334,7 @@ function DesktopPanel({ onSettings }: { onSettings: () => void }) {
           </div>
         </div>
         <div className="panel-head-actions">
-          <span className="live-pill"><i /> PLUS · 实时</span>
+          <span className="live-pill"><i /> {view.planLabel} · 实时</span>
           <button className="icon-button" type="button" aria-label="打开提醒设置" onClick={onSettings}>
             {icons.settings}
           </button>
@@ -205,20 +342,27 @@ function DesktopPanel({ onSettings }: { onSettings: () => void }) {
         <WindowDots />
       </header>
 
-      <section className="status-block">
+      <section className={`status-block is-${view.statusTone}`}>
         <div>
           <span className="section-eyebrow">今日状态</span>
-          <div className="status-title"><span className="status-check">{icons.check}</span>工作余量充足</div>
+          <div className="status-title"><span className="status-check">{icons.check}</span>{view.statusTitle}</div>
+          {view.statusMessage ? <div className="status-message">{view.statusMessage}</div> : null}
         </div>
-        <div className="status-wave"><SequenceWave level={76} /></div>
+        <div className="status-wave"><SequenceWave level={view.shortRemaining ?? 0} /></div>
       </section>
 
-      <UsageRow kind="short" label="短周期" remaining={72} reset="3小时12分后重置" />
-      <UsageRow kind="long" label="长周期" remaining={41} reset="周二 10:00 重置" />
-      <SummaryMetrics />
+      <UsageRow kind="short" label="短周期" remaining={view.shortRemaining} reset={view.shortReset} />
+      <UsageRow kind="long" label="长周期" remaining={view.longRemaining} reset={view.longReset} />
+      <SummaryMetrics items={view.summary} />
 
       <footer className="panel-footer">
-        <div className="footer-source"><span><i className="source-dot" />数据来自 Codex · 刚刚更新</span></div>
+        <div className="footer-source">
+          {runtime ? (
+            <button className="source-button" type="button" onClick={onRefresh} disabled={loading}>
+              <i className={loading ? "source-dot is-loading" : "source-dot"} />{view.sourceText}
+            </button>
+          ) : <span><i className="source-dot" />{view.sourceText}</span>}
+        </div>
         <div className="footer-bottom">
           <span className="creator"><i className="sprout">⌁</i>沐青禾开发</span>
           <div className="display-mode" aria-label="显示方式演示">
@@ -367,12 +511,14 @@ function App() {
   const initialTheme = params.get("theme") === "dark" ? "dark" : "light";
   const requestedView = params.get("view");
   const captureMode = params.get("capture") === "1";
-  const initialView: View = ["desktop", "attached", "conversation"].includes(requestedView ?? "")
+  const runtimeMode = params.get("runtime") === "tauri" && isTauriRuntime();
+  const initialView: View = runtimeMode ? "desktop" : ["desktop", "attached", "conversation"].includes(requestedView ?? "")
     ? (requestedView as View)
     : "board";
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [view, setView] = useState<View>(initialView);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const usage = useCodexUsage(runtimeMode);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -380,7 +526,7 @@ function App() {
   }, [theme]);
 
   return (
-    <main className={`app-shell view-${view}${captureMode ? " capture-mode" : ""}`}>
+    <main className={`app-shell view-${view}${captureMode ? " capture-mode" : ""}${runtimeMode ? " runtime-mode" : ""}`}>
       <Toolbar theme={theme} setTheme={setTheme} view={view} setView={setView} />
       <div className="board-heading">
         <span>HEXU / UI CONCEPT 01</span>
@@ -390,7 +536,14 @@ function App() {
       <div className="design-board">
         <div className="desktop-stage">
           <div className="mode-label desktop-label">桌面悬浮 <span>380 × 520</span></div>
-          <DesktopPanel onSettings={() => setSettingsOpen(true)} />
+          <DesktopPanel
+            onSettings={() => setSettingsOpen(true)}
+            runtime={runtimeMode}
+            snapshot={usage.snapshot}
+            loading={usage.loading}
+            error={usage.error}
+            onRefresh={() => void usage.refresh()}
+          />
         </div>
         <AttachedRail />
         <ConversationCard />
