@@ -14,16 +14,16 @@
 
 > 当前界面中的套餐、百分比、Token 和时间均为演示数据，尚未连接真实账户。
 
-## 第一版 UI 审阅稿
+## 第一版 UI 正式稿
 
-当前审阅版本为 `v2`，仍保存在 `design/drafts/`，待确认后再复制到正式资源目录 `design/ui/`。
+UI 方向已于 2026-07-15 确认，正式资源保存在 `design/ui/`；生成过程和早期对照稿仍保留在 `design/drafts/`。
 
-- [亮色完整稿](./design/drafts/hexu-ui-light-v2.png)（1536×1024）
-- [暗色完整稿](./design/drafts/hexu-ui-dark-v2.png)（1536×1024）
-- [桌面悬浮稿](./design/drafts/hexu-ui-desktop-light-v2.png)（960×760）
-- [Codex 外侧贴附稿](./design/drafts/hexu-ui-attached-light-v2.png)（1240×760）
-- [会话结构化卡片稿](./design/drafts/hexu-ui-conversation-light-v2.png)（1240×620）
-- [ImageGen 构图概念稿](./design/drafts/hexu-ui-concept-v1.png)（1536×1024）
+- [亮色完整稿](./design/ui/hexu-ui-v1.png)（1536×1024）
+- [暗色完整稿](./design/ui/hexu-ui-dark-v1.png)（1536×1024）
+- [桌面悬浮稿](./design/ui/hexu-ui-desktop-v1.png)（960×760）
+- [Codex 外侧贴附稿](./design/ui/hexu-ui-attached-v1.png)（1240×760）
+- [会话结构化卡片稿](./design/ui/hexu-ui-conversation-v1.png)（1240×620）
+- [ImageGen 构图概念稿](./design/drafts/hexu-ui-concept-v1.png)（1536×1024，仅作设计过程记录）
 
 ## 本地运行
 
